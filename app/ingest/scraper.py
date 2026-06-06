@@ -10,4 +10,12 @@ class Scraper:
     timeout: float = 10.0
 
     def run(self, urls: list[str]) -> list[dict[str, Any]]:
-        raise NotImplementedError
+        list_of_dico: list[dict[str, Any]] = []
+        for url in urls:
+            list_of_dico.append({
+                "title": "",
+                "source": "",
+                "url": url,
+                "content": ""
+            })
+        return list_of_dico

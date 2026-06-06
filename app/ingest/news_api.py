@@ -15,4 +15,14 @@ class NewsApiIngester:
             self.settings = get_settings()
 
     def run(self, topics: list[str]) -> list[dict[str, Any]]:
-        raise NotImplementedError
+        list_of_dico: list[dict[str, Any]] = []
+        for topic in topics:
+            list_of_dico.append({
+                "id": f"{topic}-1",
+                "title": "",
+                "source": "",
+                "date": "",
+                "url": "",
+                "content": ""
+            })
+        return list_of_dico

@@ -14,6 +14,8 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 
 - **Backend** : Python 3.11, uv, FastAPI ≥0.115, Pydantic 2
 - **RAG** : ChromaDB 0.5, sentence-transformers 3 (`intfloat/multilingual-e5-small`)
+- **Database** : ChromaDB (vectorielle), Postgresql (traces de l'assistant, historique des chats et sources des sujets techniques)
+- **Azure services** : Azure Blob Storage (stockage des documents bruts), Azure AI Inference (Kimi-K2.6), Azure Functions (ingestion périodique asynchrone via un webhook)
 - **LLM** : LangChain 0.3 + `langchain-azure-ai` → Azure AI Inference (Kimi-K2.6)
 - **Scraping / HTTP** : httpx 0.27, BeautifulSoup 4, markdownify
 - **Frontend** : Next.js 15 (App Router), React 19, TypeScript 5, Tailwind CSS 4
@@ -101,6 +103,47 @@ make lint       # ruff check
 make typecheck  # mypy
 make logs       # docker compose logs -f
 make down       # stop services
+```
+
+
+
+## 📊 Complete Data Pipeline (ETL + Inference)
+
+The system follows this comprehensive data flow from **sources to UI**:
+
+```
+[Sources: API/Web/PDF]
+       │
+       ▼
+[Async Ingestion Queue] ──> [Raw Data Storage (azure blob storage)]
+       │
+       ▼
+[Parsing & Markdown Conversion]
+       │
+       ▼
+[Cleaning, De-duplication, & NER Enrichment]
+       │
+       ▼
+[Parent-Child Chunking]
+       │
+       ▼
+[Vector Embedding (Moonshot)] ──> [Production Vector DB (Hybrid Index)]
+                                         │
+       ┌─────────────────────────────────┘
+       ▼
+[User Query] ──> [Query Transformation]
+       │
+       ▼
+[Hybrid Search (Vector + BM25)]
+       │
+       ▼
+[Reranking Layer (Top-K Compression)]
+       │
+       ▼
+[Context Injection & Kimi K2 LLM]
+       │
+       ▼
+[UI / Display Cards] ──> [Telemetry & Evaluation Logging (Langfuse)]
 ```
 
 ## Licence

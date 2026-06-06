@@ -2,26 +2,25 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_env: str = "development"
-    log_level: str = "INFO"
+    app_env: str = model_config["APP_ENV"]
+    log_level: str = model_config["LOG_LEVEL"]
 
-    azure_ai_inference_endpoint: str = ""
-    azure_ai_inference_api_key: str = ""
-    azure_ai_inference_model: str = "Kimi-K2.6"
+    azure_ai_inference_endpoint: str = model_config["AZURE_AI_INFERENCE_ENDPOINT"]
+    azure_ai_inference_api_key: str = model_config["AZURE_AI_INFERENCE_API_KEY"]
+    azure_ai_inference_model: str = model_config["AZURE_AI_INFERENCE_MODEL"]
 
-    chroma_url: str = "http://chromadb:8000"
-    chroma_collection: str = "articles"
-    embedding_model: str = "intfloat/multilingual-e5-small"
+    chroma_url: str = model_config["CHROMA_URL"]
+    chroma_collection: str = model_config["CHROMA_COLLECTION"]
+    embedding_model: str = model_config["EMBEDDING_MODEL"]
 
-    news_api_key: str = ""
-    news_api_base_url: str = "https://newsapi.org/v2"
+    news_api_key: str = model_config["NEWS_API_KEY"]
+    news_api_base_url: str = model_config["NEWS_API_BASE_URL"]
 
-    backend_port: int = 8000
-    frontend_port: int = 3000
+    backend_port: int = model_config["BACKEND_PORT"]
+    frontend_port: int = model_config["FRONTEND_PORT"]
 
 
 @lru_cache(maxsize=1)
