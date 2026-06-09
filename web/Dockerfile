@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Stage 1: Frontend (Next.js)
+FROM node:20-alpine AS frontend
 
 WORKDIR /app
 

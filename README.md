@@ -26,10 +26,11 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 ```
 .
 ├── app/                      # backend FastAPI
-│   ├── main.py               # endpoints /health, /topics, /chat
+│   ├── main.py               # endpoints /health, /topics, /chat + WebSub lifespan
 │   ├── chat.py               # orchestration retrieval + fresh news + LLM
 │   ├── config.py             # settings (env)
 │   ├── schemas.py            # modèles pydantic
+│   ├── db.py                 # SQLAlchemy engine + session factory (Postgres optionnel)
 │   ├── rag/
 │   │   ├── chroma_client.py  # client HTTP Chroma + collection `articles`
 │   │   ├── retrieval.py      # embedding + query top-k
@@ -38,9 +39,10 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 │   │   ├── news_api.py       # ingester NewsAPI → Chroma
 │   │   ├── scraper.py        # scraping de sources tech
 │   │   ├── cleaning.py       # HTML→Markdown, dedup, chunking, boilerplate
-│   │   └── enrich.py         # hook d'enrichissement post-retrieval
+│   │   ├── enrich.py         # hook d'enrichissement post-retrieval
+│   │   └── fresh_news.py     # FreshNewsIngester : fetch NewsAPI + parse XML WebSub
 │   └── runtime/
-│       └── fresh_news.py     # fetch live NewsAPI au moment du chat
+│       └── fresh_news.py     # webhook WebSub (/webhook/websub GET+POST) + subscribe_to_feed
 ├── scripts/
 │   └── ingest_cli.py         # CLI d'ingestion (news / scrape)
 ├── tests/
@@ -74,6 +76,9 @@ Tests :
 make test                     # uv run pytest
 ```
 
+Fichiers de test (`tests/acceptance/`) :
+- `test_cleaning.py`, `test_fresh_news.py`, `test_health.py`, `test_news_api_ingester.py`, `test_scraper.py`
+
 Ingestion (CLI) :
 
 ```bash
@@ -93,7 +98,7 @@ Le choix exact des sources reste à arbitrer en fonction des sujets ciblés et d
 
 ## Aller plus loin (optionnel)
 
-La stack est extensible vers **Postgres** pour porter des comptes utilisateur (sign-up / sign-in), des sujets favoris et un historique des recherches — non couvert ici. Cela ajouterait des endpoints `/users`, `/me/favorites`, `/me/history` et une page « Mon compte » côté frontend, avec un schéma user-scoped et les obligations RGPD associées (hash des mots de passe, durée de conservation, droit à l'effacement).
+**Postgres** est déjà intégré (`app/db.py`, Alembic) et utilisé pour tracer les souscriptions WebSub (`ingest_runs`). La stack est extensible pour porter des comptes utilisateur (sign-up / sign-in), des sujets favoris et un historique des recherches. Cela ajouterait des endpoints `/users`, `/me/favorites`, `/me/history` et une page « Mon compte » côté frontend, avec un schéma user-scoped et les obligations RGPD associées (hash des mots de passe, durée de conservation, droit à l'effacement).
 
 ## Utiles
 

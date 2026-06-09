@@ -1,20 +1,23 @@
+# Load environment variables from .env file
+# Required file: .env (see .env.example for template)
+#
 services:
-  db:
-    image: postgres:16
+  postgres:
+    image: postgres:16-alpine
     environment:
-      POSTGRES_USER: nodalys
-      POSTGRES_PASSWORD: nodalys
-      POSTGRES_DB: nodalys
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-veille}
     ports:
       - "5432:5432"
     volumes:
-      - nodalys_db_data:/var/lib/postgresql/data
+      - .docker-data/postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nodalys -d nodalys"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-veille}"]
+      interval: 10s
       timeout: 5s
       retries: 10
-      
+
   chromadb:
     image: chromadb/chroma:0.5.20
     ports:
@@ -36,30 +39,42 @@ services:
       dockerfile: Dockerfile.backend
     ports:
       - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
     environment:
       APP_ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       AZURE_AI_INFERENCE_ENDPOINT: ${AZURE_AI_INFERENCE_ENDPOINT:-}
       AZURE_AI_INFERENCE_API_KEY: ${AZURE_AI_INFERENCE_API_KEY:-}
       AZURE_AI_INFERENCE_MODEL: ${AZURE_AI_INFERENCE_MODEL:-Kimi-K2.6}
-      CHROMA_URL: http://chromadb:8000
+      CHROMA_URL: ${CHROMA_URL:-http://chromadb:8000}
       CHROMA_COLLECTION: ${CHROMA_COLLECTION:-articles}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-small}
       NEWS_API_KEY: ${NEWS_API_KEY:-}
       NEWS_API_BASE_URL: ${NEWS_API_BASE_URL:-https://newsapi.org/v2}
+      DB_URL: ${DB_URL:-postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@postgres:5432/${DB_NAME:-veille}}
+      WEBSUB_SECRET: ${WEBSUB_SECRET:-}
+      WEBSUB_HUB_URL: ${WEBSUB_HUB_URL:-https://pubsubhubbub.appspot.com/}
+      WEBSUB_CALLBACK_URL: ${WEBSUB_CALLBACK_URL:-}
+      RSS_FEED_URL: ${RSS_FEED_URL:-https://medium.com/feed/tag/csharp}
     volumes:
       - ./app:/srv/app
       - ./scripts:/srv/scripts
     depends_on:
       chromadb:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   frontend:
     build:
       context: ./web
       dockerfile: Dockerfile
+      target: frontend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
+    env_file:
+      - .env
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     depends_on:

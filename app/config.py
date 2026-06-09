@@ -1,26 +1,43 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    app_env: str = model_config["APP_ENV"]
-    log_level: str = model_config["LOG_LEVEL"]
+    app_env: str
+    log_level: str
 
-    azure_ai_inference_endpoint: str = model_config["AZURE_AI_INFERENCE_ENDPOINT"]
-    azure_ai_inference_api_key: str = model_config["AZURE_AI_INFERENCE_API_KEY"]
-    azure_ai_inference_model: str = model_config["AZURE_AI_INFERENCE_MODEL"]
+    azure_ai_inference_endpoint: str
+    azure_ai_inference_api_key: str
+    azure_ai_inference_model: str
 
-    chroma_url: str = model_config["CHROMA_URL"]
-    chroma_collection: str = model_config["CHROMA_COLLECTION"]
-    embedding_model: str = model_config["EMBEDDING_MODEL"]
+    chroma_url: str
+    chroma_collection: str
+    embedding_model: str
 
-    news_api_key: str = model_config["NEWS_API_KEY"]
-    news_api_base_url: str = model_config["NEWS_API_BASE_URL"]
+    news_api_key: str
+    news_api_base_url: str
 
-    backend_port: int = model_config["BACKEND_PORT"]
-    frontend_port: int = model_config["FRONTEND_PORT"]
+    db_url: str = ""
+
+    websub_secret: str = ""
+    websub_hub_url: str = "https://pubsubhubbub.appspot.com/"
+    websub_callback_url: str = ""
+    rss_feed_urls: list[str] = ["https://medium.com/feed/tag/csharp"]
+
+    backend_port: int
+    frontend_port: int
+
+    @model_validator(mode="after")
+    def _set_websub_callback_url(self) -> "Settings":
+        if not self.websub_callback_url:
+            self.websub_callback_url = (
+                f"http://localhost:{self.backend_port}/webhook/websub"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)
