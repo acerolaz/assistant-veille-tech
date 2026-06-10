@@ -13,7 +13,6 @@ from app.schemas import ArticleCard, ChatResponse
 
 logger = logging.getLogger(__name__)
 
-
 SYSTEM_PROMPT = (
     "Tu es l'assistant de veille technologique interne de Nauda Palisse.\n"
     "Réponds en français, factuel, concis. Cite tes sources via les cartes d'articles.\n"
@@ -37,6 +36,16 @@ def get_llm() -> AzureAIChatCompletionsModel | None:
     )
 
 
+def _split_tags(raw: Any) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw]
+    if isinstance(raw, str):
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    return []
+
+
 def _format_context(retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> str:
     parts: list[str] = []
     if retrieved:
@@ -57,17 +66,18 @@ def _format_context(retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]
     return "\n\n".join(parts) if parts else "(aucune source disponible)"
 
 
-def _build_cards(retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[ArticleCard]:
+def _build_cards(
+    retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]
+) -> list[ArticleCard]:
     cards: list[ArticleCard] = []
     for chunk in retrieved:
         meta = chunk.get("metadata") or {}
-        snippet = (chunk.get("content") or "")[:280]
         cards.append(
             ArticleCard(
                 title=meta.get("title", "Sans titre"),
                 source=meta.get("source", "interne"),
                 date=meta.get("date"),
-                snippet=snippet,
+                snippet=(chunk.get("content") or "")[:280],
                 url=meta.get("url", ""),
                 tags=_split_tags(meta.get("tags")),
             )
@@ -86,14 +96,14 @@ def _build_cards(retrieved: list[dict[str, Any]], fresh: list[dict[str, Any]]) -
     return cards
 
 
-def _split_tags(raw: Any) -> list[str]:
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return [str(x) for x in raw]
-    if isinstance(raw, str):
-        return [t.strip() for t in raw.split(",") if t.strip()]
-    return []
+def _extract_answer(raw: str) -> str:
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict) and "answer" in data:
+            return str(data["answer"])
+    except json.JSONDecodeError:
+        pass
+    return raw.strip()
 
 
 async def compose_answer(
@@ -146,13 +156,3 @@ async def compose_answer(
         answer = f"Synthèse indisponible (erreur LLM). {len(cards)} article(s) référencé(s)."
 
     return ChatResponse(answer=answer, cards=cards, status="ok")
-
-
-def _extract_answer(raw: str) -> str:
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict) and "answer" in data:
-            return str(data["answer"])
-    except json.JSONDecodeError:
-        pass
-    return raw.strip()

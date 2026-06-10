@@ -13,6 +13,8 @@ config = context.config
 
 db_url = os.getenv("DB_URL")
 if db_url:
+    if not os.path.exists("/.dockerenv"):
+        db_url = db_url.replace("@postgres:", "@localhost:")
     config.set_main_option("sqlalchemy.url", db_url)
 
 if config.config_file_name is not None:

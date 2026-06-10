@@ -21,10 +21,42 @@ class NewsApiIngester:
         if self.settings is None:
             self.settings = get_settings()
 
-    def run(self, topics: list[str]) -> list[dict[str, Any]]:
-        """Fetch articles from NewsAPI with pagination per topic.
+    def _fetch_topic(
+        self,
+        client: httpx.Client,
+        topic: str,
+        from_date: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch one page of NewsAPI articles for a single topic and return raw dicts."""
+        response = client.get(
+            self.settings.news_api_base_url,
+            params={
+                "q": topic,
+                "from": from_date,
+                "apiKey": self.settings.news_api_key,
+                "sortBy": "publishedAt",
+                "language": "en",
+                "pageSize": 100,
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data.get("status") != "ok":
+            logger.error("NewsAPI error for topic '%s': %s", topic, data.get("message"))
+            return []
+        page = data.get("articles", [])
+        logger.info(
+            "Fetched %d articles for topic '%s' (%d total available)",
+            len(page),
+            topic,
+            data.get("totalResults", 0),
+        )
+        return page
 
-        For each topic, fetches one page (max 100 articles) from the last 7 days in a single request.
+    def run(self, topics: list[str]) -> list[dict[str, Any]]:
+        """Fetch articles from NewsAPI for the last 7 days, one page per topic.
+
         Uses Article (Pydantic) for validation, returns list of dicts.
         """
         if not topics:
@@ -33,44 +65,26 @@ class NewsApiIngester:
         from_date = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         articles: list[dict[str, Any]] = []
 
-        try:
-            with httpx.Client() as client:
-                for topic in topics:
-                    response = client.get(
-                        self.settings.news_api_base_url,
-                        params={
-                            "q": topic,
-                            "from": from_date,
-                            "apiKey": self.settings.news_api_key,
-                            "sortBy": "publishedAt",
-                            "language": "en",
-                            "pageSize": 100,  # Max 100 per page (NewsAPI limit)
-                        },
-                        timeout=10.0,
-                    )
-                    response.raise_for_status()
-                    data = response.json()
-
-                    if data.get("status") != "ok":
-                        logger.error(f"NewsAPI error for topic '{topic}': {data.get('message')}")
-                        continue
-
-                    page_articles = data.get("articles", [])
-
-                    for idx, article_data in enumerate(page_articles):
+        seen_ids: set[str] = set()
+        with httpx.Client() as client:
+            for topic in topics:
+                try:
+                    page = self._fetch_topic(client, topic, from_date)
+                    for idx, item in enumerate(page):
                         article = Article(
                             id=f"{topic}-{idx}",
-                            title=article_data.get("title", ""),
-                            source=article_data.get("source", {}).get("name", "NewsAPI"),
-                            date=article_data.get("publishedAt"),
-                            url=article_data.get("url", ""),
-                            content=article_data.get("content", ""),
+                            title=item.get("title", ""),
+                            source=item.get("source", {}).get("name", "NewsAPI"),
+                            date=item.get("publishedAt"),
+                            url=item.get("url", ""),
+                            content=item.get("content", ""),
                             tags=[topic],
                         )
-                        articles.append(article.model_dump(mode="json"))
+                        d = article.model_dump(mode="json")
+                        if d["id"] not in seen_ids:
+                            seen_ids.add(d["id"])
+                            articles.append(d)
+                except Exception as exc:
+                    logger.error("NewsAPI fetch failed for topic '%s': %s", topic, exc)
 
-                    logger.info(f"Fetched {len(page_articles)} articles for topic '{topic}' ({data.get('totalResults', 0)} total available)")
-
-        except Exception as exc:
-            logger.error(f"NewsAPI fetch failed: {exc}")
         return articles

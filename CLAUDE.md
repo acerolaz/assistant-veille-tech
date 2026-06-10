@@ -1,111 +1,182 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# FastAPI + ChromaDB Project
 
 ## Commands
 
-All commands run from `assistant-veille-tech/`.
+`uvicorn app.main:app --reload` — Start development server on port 8000
 
-```bash
-# Setup
-cp .env.example .env        # Fill in Azure AI, NewsAPI, and ChromaDB secrets
-make install                # uv sync (install Python deps)
-make up                     # Start all services (ChromaDB, backend, frontend) via Docker Compose
+`pytest` — Run test suite
 
-# Services
-# Backend:  http://localhost:8000  (API docs at /docs)
-# Frontend: http://localhost:3000
-# ChromaDB: http://localhost:8002
+`pytest --cov=app` — Run tests with coverage report
 
-# Development
-make test                   # Run pytest suite
-make fmt                    # ruff format + ruff check --fix
-make lint                   # ruff check only
-make typecheck              # mypy app
-make logs                   # Tail all container logs
-make down                   # Stop services
+`alembic upgrade head` — Apply database migrations
 
-# Ingestion CLI
-make ingest                 # Fetch news for default topics
-make scrape                 # Scrape a single URL
-make chat-test              # curl smoke test against /chat
+`alembic revision --autogenerate -m "description"` — Create new migration
 
-# Run a single test file
-uv run pytest tests/acceptance/test_cleaning.py -v
+`ruff check .` — Run linter (checks PEP 8 and import sorting)
 
-# Run ingestion manually
-PYTHONPATH=. uv run python scripts/ingest_cli.py news --topic python --topic ai-ml
-PYTHONPATH=. uv run python scripts/ingest_cli.py scrape --url https://example.com/article
-```
+`ruff format .` — Format code (ensures PEP 8 compliance)
+
+`mypy app/` — Type check
 
 ## Architecture
 
-This is a **RAG (Retrieval-Augmented Generation) assistant** for technical news watch (veille tech). It surfaces curated articles and answers questions using a vector database + LLM.
+* **Framework**: FastAPI with async/await throughout
+* **Database**: SQLAlchemy 2.0 async with PostgreSQL
+* **Vector DB**: ChromaDB for embeddings and vector similarity search
+* **Migrations**: Alembic for schema migrations
+* **Validation**: Pydantic v2 models for request/response schemas
+* **Auth**: JWT tokens via python-jose, password hashing with passlib
+* **Testing**: pytest with httpx AsyncClient for API tests and ephemeral Chroma clients
 
-### Data Flow
+## Project Structure
 
-**Ingestion (offline / scheduled):**
 ```
-NewsAPI / Web scraper
-  → HTML → Markdown conversion (markdownify + BeautifulSoup)
-  → Deduplication + boilerplate removal (app/ingest/cleaning.py)
-  → Chunking: 1200 chars, 120 char overlap (langchain-text-splitters)
-  → Embedding: intfloat/multilingual-e5-small (sentence-transformers)
-  → ChromaDB (stored with metadata: title, source, date, tags, url)
+app/
+├── main.py              # FastAPI app factory, middleware, startup/shutdown
+├── config.py            # Settings via pydantic-settings (reads .env)
+├── dependencies.py      # Shared FastAPI dependencies (get_db, get_current_user, get_chroma_client)
+├── models/              # SQLAlchemy ORM models
+├── schemas/             # Pydantic request/response models
+├── routers/             # API route modules (one per domain)
+├── services/            # Business logic layer (called by routers)
+├── repositories/        # Database query layer (called by services)
+├── vector_db/           # ChromaDB connection, collections, and vector operations
+└── tests/
+    ├── conftest.py      # Fixtures: async client, test DB, auth headers, ephemeral Chroma
+    ├── test_routers/    # API integration tests
+    ├── test_services/   # Unit tests for business logic
+    └── test_vector_db/  # Unit/integration tests for vector search
+
 ```
 
-**Query (real-time, per user request):**
+## Code Conventions, Style, & SOLID Principles
+
+* **Code Style & Formatting**:
+* All Python code must strictly adhere to **PEP 8 conventions**.
+* PEP 8 compliance is automatically enforced via `ruff check .` (linter) and `ruff format .` (formatter).
+* Proper type hinting (PEP 484) is required on all functions, verified via `mypy`.
+
+
+* **Single Responsibility Principle (SRP)**:
+* Router functions are kept strictly thin; they only delegate requests and return responses.
+* The `services/` layer handles core application logic, completely decoupled from HTTP concerns.
+* The `repositories/` layer handles relational database queries, while the `vector_db/` layer focuses strictly on ChromaDB operations and embeddings.
+
+
+* **Open/Closed Principle (OCP)**:
+* Code is open for extension but closed for modification.
+* Isolate models using separate Create, Update, and Response Pydantic schemas (e.g., `UserCreate`, `UserUpdate`, `UserResponse`) to extend inputs/outputs safely without rewriting core models.
+* Introduce new vector similarity metrics or embedding strategies by extending the `vector_db/` layer without altering existing service logic.
+
+
+* **Liskov Substitution Principle (LSP)**:
+* Derived classes or sub-modules must be substitutable for their base abstractions (e.g., implementing Abstract Base Classes/Interfaces for vector repositories).
+* All routes return typed Pydantic response models—never return raw dicts or ORM objects—ensuring uniform contract adherence.
+
+
+* **Interface Segregation Principle (ISP)**:
+* Clients are not forced to depend on methods they do not use.
+* Utilize FastAPI's dependency injection system to inject precise dependencies (e.g., `db: AsyncSession = Depends(get_db)`, `chroma_client = Depends(get_chroma_client)`) rather than passing monolithic state objects.
+
+
+* **Dependency Inversion Principle (DIP)**:
+* High-level modules (e.g., Services) rely on abstractions (injected dependencies/interfaces) rather than importing hardcoded, concrete database or vector connections.
+
+
+* **General conventions**:
+* Vector operations in ChromaDB should be wrapped in async utility functions or executed using `run_in_threadpool` if utilizing the synchronous Chroma SDK to avoid blocking the event loop.
+* Background tasks handled via FastAPI's `BackgroundTasks`, not Celery (unless explicitly needed).
+
+
+
+## Error Handling
+
+* Validation errors return 422 with Pydantic's default error format.
+* Business logic errors raise `HTTPException` with appropriate status codes.
+* Use custom exception handlers in `main.py` for domain-specific error types.
+* Never catch broad `Exception` — catch specific exception types.
+
+## Database & Vector Patterns
+
+* Always use `select()` style queries (SQLAlchemy 2.0), not legacy `query()`.
+* Relationships use `selectinload()` or `joinedload()` to avoid N+1 queries.
+* Transactions are per-request — the dependency handles commit/rollback.
+* Use `Annotated` types for common column patterns (e.g., `created_at`, `updated_at`).
+* Initialize persistent or ephemeral ChromaDB clients in `vector_db/connection.py` and manage collection retrievals cleanly via repository/service layers.
+
+## Testing (Unit & Acceptance)
+
+* Tests use a separate test database (configured in `conftest.py`).
+* Each test runs in a transaction that rolls back — tests don't affect each other.
+* Mock external services (email, payment) but hit the real test database.
+
+### Acceptance Tests (Integration)
+
+* Acceptance tests validate the end-to-end flow from the HTTP request down to the database/vector store.
+* Use `httpx.AsyncClient` with `app=app` to fire requests against endpoints.
+
+```python
+# tests/test_routers/test_search.py
+import pytest
+from httpx import AsyncClient
+
+@pytest.mark.asyncio
+async def test_vector_search_endpoint(client: AsyncClient, admin_token_headers):
+    # Given an authenticated client and a query payload
+    payload = {"query": "agentic workflow", "limit": 3}
+    
+    # When hitting the search router
+    response = await client.post("/api/v1/search/vector", json=payload, headers=admin_token_headers)
+    
+    # Then acceptance criteria is met (HTTP 200 and structured list response)
+    assert response.status_code == 200
+    data = response.json()
+    assert "results" in data
+    assert isinstance(data["results"], list)
+
 ```
-POST /chat  {question, topics}
-  → Query expansion: topic slugs appended to question
-  → Semantic search in ChromaDB → top-8 chunks  (app/rag/retrieval.py)
-  → Post-retrieval enrichment hook               (app/ingest/enrich.py)
-  → Live NewsAPI fetch for selected topics        (app/runtime/fresh_news.py)
-  → Context assembly (retrieved + fresh news)
-  → LangChain → Azure AI Inference (Kimi-K2.6)  (app/rag/llm.py)
-  → Response: {answer, cards[], status}
+
+### Unit Tests
+
+* Unit tests isolate specific classes or functions (e.g., Services or Vector Repositories).
+* For vector operations, initialize an ephemeral in-memory Chroma client (`chromadb.EphemeralClient()`) within `conftest.py` fixtures to keep unit tests fast, independent, and stateless.
+
+```python
+# tests/test_vector_db/test_chroma.py
+import pytest
+import chromadb
+from app.vector_db.repository import ChromaVectorRepository
+
+@pytest.fixture
+def ephemeral_chroma_client():
+    # Ephemeral memory client for pure unit testing isolated from disk/network
+    return chromadb.EphemeralClient()
+
+def test_add_and_query_vectors(ephemeral_chroma_client):
+    # Given a clean unit repo instance bound to our ephemeral client
+    repo = ChromaVectorRepository(client=ephemeral_chroma_client)
+    collection = repo.get_or_create_collection("test-collection")
+    
+    # When a vector is added
+    collection.add(
+        documents=["This is a test document about RAG."],
+        metadatas=[{"source": "unit-test"}],
+        ids=["doc1"]
+    )
+    
+    # Then it can be queried directly in memory
+    results = collection.query(query_texts=["RAG"], n_results=1)
+    
+    assert results["ids"][0][0] == "doc1"
+
 ```
 
-### Key Components
+## Things to Avoid
 
-**`app/rag/`** — The retrieval + generation pipeline:
-- `chroma_client.py` — ChromaDB HTTP client factory (uses `CHROMA_URL`)
-- `retrieval.py` — Embeds the query, runs similarity search, returns `Article` objects
-- `llm.py` — Builds the LangChain chain, calls Azure AI, returns structured answer; gracefully degrades (returns raw sources) if credentials are absent
-
-**`app/ingest/`** — Document preparation:
-- `news_api.py` — Async NewsAPI v2 fetcher, 7-day window, paginated
-- `scraper.py` — httpx scraper + HTML→Markdown
-- `cleaning.py` — Boilerplate removal, deduplication by URL/ID, chunking
-- `enrich.py` — Post-retrieval hook (stub; intended for metadata enrichment)
-
-**`app/runtime/fresh_news.py`** — Live news injection at query time. Currently returns stub data. Contains a WebSub (PubSubHubbub) template with HMAC validation for when upstream contract is finalized — **do not replace this file with a working implementation without confirming the upstream spec.**
-
-**`app/main.py`** — Three routes: `GET /health`, `GET /topics`, `POST /chat`. Chat orchestration is in `app/chat.py`.
-
-**`web/`** — Next.js 15 / React 19 / TypeScript 5 / Tailwind 4 frontend. Topic selector, free-text question input, results grid with article cards. API client in `web/lib/api.ts`.
-
-**`scripts/ingest_cli.py`** — Typer CLI wrapping the ingest pipeline; the primary way to populate ChromaDB.
-
-### Graceful Degradation
-
-The system has three response statuses: `ok` (LLM answered with sources), `empty` (no relevant chunks found), `degraded` (LLM unavailable — returns raw source cards without synthesized answer). Handle all three in the frontend.
-
-### Author-Locked Stubs
-
-Several modules in `app/ingest/` and `app/runtime/` are intentionally left as stubs pending upstream requirements. When working in these files, provide conceptual guidance rather than full implementations unless the upstream contract is confirmed.
-
-### Environment Variables
-
-See `.env.example`. Key variables:
-- `AZURE_AI_INFERENCE_ENDPOINT` / `AZURE_AI_INFERENCE_API_KEY` / `AZURE_AI_INFERENCE_MODEL` — LLM
-- `CHROMA_URL` — `http://chromadb:8000` in Docker, `http://localhost:8002` locally
-- `CHROMA_COLLECTION` — ChromaDB collection name (default: `articles`)
-- `EMBEDDING_MODEL` — `intfloat/multilingual-e5-small`
-- `NEWS_API_KEY` — NewsAPI v2 key
-- `NEXT_PUBLIC_API_URL` — Backend URL as seen from the browser
-
-### Planned but Not Implemented
-
-- PostgreSQL integration (user accounts, session traces, favorites) — Alembic structure exists in `app/migrations/` but is unused
-- WebSub real-time feed subscription in `fresh_news.py`
+* Do NOT use synchronous database drivers or blocking I/O in async routes.
+* Do NOT return SQLAlchemy models directly from routes — always use Pydantic schemas.
+* Do NOT put business logic in router functions — use the service layer.
+* Do NOT use synchronous ChromaDB operations directly in async endpoints without `run_in_threadpool`.
+* Do NOT use `*` imports.
+* Do NOT hardcode configuration — use pydantic-settings and environment variables.
+* Do NOT use global mutable state — use FastAPI's dependency injection system.

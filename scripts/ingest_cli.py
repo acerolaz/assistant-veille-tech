@@ -8,7 +8,7 @@ from app.db import db_session, execute
 from app.ingest.news_api import NewsApiIngester
 from app.ingest.scraper import Scraper
 from app.ingest.cleaning import clean_html_to_markdown, dedupe
-from app.rag.chroma_client import get_collection
+from app.vector_db.connection import get_collection
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -134,48 +134,99 @@ def scrape(urls: list[str] = typer.Option(..., "--url", "-u", help="URL to scrap
 
     typer.echo(f"🕷️  Scraping {len(urls)} URL(s)")
 
-    try:
-        scraper = Scraper()
-        articles = scraper.run(urls)
+    with db_session() as session:
+        run_id: int | None = None
+        if session is not None:
+            row = execute(
+                session,
+                "INSERT INTO ingest_runs (ingester, topics, status)"
+                " VALUES (:ingester, :topics, 'running') RETURNING id",
+                ingester="scraper",
+                topics=json.dumps(urls),
+            )
+            run_id = row[0] if row else None
 
-        if not articles:
-            typer.echo("⚠️  No content scraped")
-            return
+        try:
+            scraper = Scraper()
+            articles = scraper.run(urls)
 
-        typer.echo(f"✓ Scraped {len(articles)} articles")
+            if not articles:
+                typer.echo("⚠️  No content scraped")
+                if session is not None and run_id is not None:
+                    execute(
+                        session,
+                        "UPDATE ingest_runs"
+                        " SET finished_at=NOW(), status='empty', fetched=0, stored=0"
+                        " WHERE id=:run_id",
+                        run_id=run_id,
+                    )
+                return
 
-        # Clean and process
-        for article in articles:
-            if article.get("content"):
-                article["content"] = clean_html_to_markdown(article["content"])
+            fetched = len(articles)
+            typer.echo(f"✓ Scraped {fetched} articles")
 
-        # Remove duplicates
-        articles = dedupe(articles)
-        typer.echo(f"✓ After deduplication: {len(articles)} articles")
+            for article in articles:
+                if article.get("content"):
+                    article["content"] = clean_html_to_markdown(article["content"])
 
-        # Store in ChromaDB
-        collection = get_collection()
-        for idx, article in enumerate(articles):
-            article_id = article.get("url") or article.get("title") or f"scraped-{idx}"
-            if isinstance(article_id, str):
-                collection.upsert(
-                    ids=[article_id],
-                    documents=[article.get("content", "")],
-                    metadatas=[
-                        {
-                            "title": article.get("title", ""),
-                            "source": article.get("source", "scraped"),
-                            "url": article.get("url", ""),
-                        }
-                    ],
+            articles = dedupe(articles)
+            typer.echo(f"✓ After deduplication: {len(articles)} articles")
+
+            collection = get_collection()
+            for idx, article in enumerate(articles):
+                article_id = article.get("url") or article.get("title") or f"scraped-{idx}"
+                if isinstance(article_id, str):
+                    collection.upsert(
+                        ids=[article_id],
+                        documents=[article.get("content", "")],
+                        metadatas=[
+                            {
+                                "title": article.get("title", ""),
+                                "source": article.get("source", "scraped"),
+                                "url": article.get("url", ""),
+                            }
+                        ],
+                    )
+                if session is not None and run_id is not None:
+                    execute(
+                        session,
+                        "INSERT INTO ingest_articles"
+                        " (run_id, article_id, title, publication, url, topic)"
+                        " VALUES (:run_id, :article_id, :title, :publication, :url, :topic)",
+                        run_id=run_id,
+                        article_id=str(article.get("url") or article.get("title") or f"scraped-{idx}"),
+                        title=str(article.get("title") or ""),
+                        publication=str(article.get("source") or ""),
+                        url=str(article.get("url") or ""),
+                        topic="",
+                    )
+
+            stored = len(articles)
+            if session is not None and run_id is not None:
+                execute(
+                    session,
+                    "UPDATE ingest_runs"
+                    " SET finished_at=NOW(), status='ok', fetched=:fetched, stored=:stored"
+                    " WHERE id=:run_id",
+                    run_id=run_id,
+                    fetched=fetched,
+                    stored=stored,
                 )
+            typer.echo(f"✅ Ingested {stored} articles to ChromaDB")
 
-        typer.echo(f"✅ Ingested {len(articles)} articles to ChromaDB")
-
-    except Exception as exc:
-        logger.error(f"Scraping failed: {exc}")
-        typer.echo(f"❌ Error: {exc}", err=True)
-        raise typer.Exit(1)
+        except Exception as exc:
+            logger.error(f"Scraping failed: {exc}")
+            if session is not None and run_id is not None:
+                execute(
+                    session,
+                    "UPDATE ingest_runs"
+                    " SET finished_at=NOW(), status='error', error=:error"
+                    " WHERE id=:run_id",
+                    run_id=run_id,
+                    error=str(exc),
+                )
+            typer.echo(f"❌ Error: {exc}", err=True)
+            raise typer.Exit(1)
 
 
 if __name__ == "__main__":

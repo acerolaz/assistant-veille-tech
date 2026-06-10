@@ -1,19 +1,16 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
 
-
-def test_health_returns_ok() -> None:
-    client = TestClient(app)
+def test_health_returns_ok(client: TestClient) -> None:
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
 
-def test_topics_returns_popular_list() -> None:
-    client = TestClient(app)
+def test_topics_returns_popular_list(client: TestClient) -> None:
     r = client.get("/topics")
     assert r.status_code == 200
     data = r.json()

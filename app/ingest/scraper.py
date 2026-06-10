@@ -19,49 +19,41 @@ class Scraper:
     user_agent: str = "nauda-palisse-veille/0.1"
     timeout: float = 10.0
 
-    def run(self, urls: list[str]) -> list[dict[str, Any]]:
-        """Scrape URLs and return articles as list of dicts.
+    def _fetch(self, client: httpx.Client, url: str) -> httpx.Response:
+        response = client.get(
+            url, headers={"User-Agent": self.user_agent}, timeout=self.timeout
+        )
+        response.raise_for_status()
+        return response
 
-        Uses Article (Pydantic) for validation, returns list of dicts.
-        """
+    def _extract_title(self, html: str) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        tag = soup.find("title") or soup.find("h1")
+        return tag.get_text(strip=True) if tag else "No title"
+
+    def _build_article(self, url: str, html: str, idx: int) -> dict[str, Any]:
+        return Article(
+            id=f"scraped-{idx}",
+            title=self._extract_title(html),
+            source=url.split("/")[2],
+            date=datetime.now(timezone.utc),
+            url=url,
+            content=clean_html_to_markdown(html),
+            tags=[],
+        ).model_dump(mode="json")
+
+    def run(self, urls: list[str]) -> list[dict[str, Any]]:
+        """Scrape URLs and return articles as list of dicts."""
         if not urls:
             return []
-
         articles: list[dict[str, Any]] = []
-
-        for idx, url in enumerate(urls):
-            try:
-                with httpx.Client() as client:
-                    response = client.get(
-                        url,
-                        headers={"User-Agent": self.user_agent},
-                        timeout=self.timeout,
-                    )
-                    response.raise_for_status()
-
-                content = clean_html_to_markdown(response.text)
-
-                soup = BeautifulSoup(response.text, "html.parser")
-                title = ""
-                title_tag = soup.find("title") or soup.find("h1")
-                if title_tag:
-                    title = title_tag.get_text(strip=True)
-
-                article = Article(
-                    id=f"scraped-{idx}",
-                    title=title or "No title",
-                    source=url.split("/")[2],
-                    date=datetime.now(timezone.utc),
-                    url=url,
-                    content=content,
-                    tags=[],
-                )
-                articles.append(article.model_dump(mode="json"))
-                logger.info(f"Scraped: {url}")
-
-            except Exception as exc:
-                logger.error(f"Failed to scrape {url}: {exc}")
-                continue
-
+        with httpx.Client() as client:
+            for idx, url in enumerate(urls):
+                try:
+                    response = self._fetch(client, url)
+                    articles.append(self._build_article(url, response.text, idx))
+                    logger.info(f"Scraped: {url}")
+                except Exception as exc:
+                    logger.error(f"Failed to scrape {url}: {exc}")
         logger.info(f"Total scraped: {len(articles)} articles from {len(urls)} URLs")
         return articles

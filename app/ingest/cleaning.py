@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from bs4 import BeautifulSoup, SoupStrainer
+from bs4 import BeautifulSoup
 from markdownify import markdownify as md
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 def clean_html_to_markdown(html: str, bs_kwargs: dict | None = None) -> str:
     if bs_kwargs is None:
-        bs_kwargs = {
-            "parse_only": SoupStrainer(class_=("post-title", "post-header", "post-content"))
-        }
+        bs_kwargs = {}
 
     soup = BeautifulSoup(html, "html.parser", **bs_kwargs)
     stripped = strip_boilerplate(soup)
@@ -20,14 +18,20 @@ def clean_html_to_markdown(html: str, bs_kwargs: dict | None = None) -> str:
 
 
 def dedupe(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove duplicate articles by ID, keeping first occurrence."""
-    seen_ids = set()
+    """Remove duplicate articles by ID or URL, keeping first occurrence."""
+    seen_ids: set[str] = set()
+    seen_urls: set[str] = set()
     result = []
     for article in articles:
-        article_id = article.get("id")
-        if article_id and article_id not in seen_ids:
+        article_id = str(article["id"]) if article.get("id") else None
+        article_url = str(article["url"]) if article.get("url") else None
+        if (article_id and article_id in seen_ids) or (article_url and article_url in seen_urls):
+            continue
+        if article_id:
             seen_ids.add(article_id)
-            result.append(article)
+        if article_url:
+            seen_urls.add(article_url)
+        result.append(article)
     return result
 
 

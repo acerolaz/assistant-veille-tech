@@ -7,7 +7,7 @@ from typing import Any
 from sentence_transformers import SentenceTransformer
 
 from app.config import get_settings
-from app.rag.chroma_client import get_collection
+from app.vector_db.connection import get_collection
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +38,7 @@ def retrieve(query: str, k: int = 8) -> list[dict[str, Any]]:
     ids = (result.get("ids") or [[]])[0]
     distances = (result.get("distances") or [[]])[0]
 
-    chunks: list[dict[str, Any]] = []
-    for doc_id, doc, meta, dist in zip(ids, docs, metas, distances, strict=False):
-        chunks.append(
-            {
-                "id": doc_id,
-                "content": doc,
-                "metadata": meta or {},
-                "distance": dist,
-            }
-        )
-    return chunks
+    return [
+        {"id": doc_id, "content": doc, "metadata": meta or {}, "distance": dist}
+        for doc_id, doc, meta, dist in zip(ids, docs, metas, distances, strict=False)
+    ]
