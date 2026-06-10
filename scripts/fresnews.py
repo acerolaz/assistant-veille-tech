@@ -33,14 +33,18 @@ def _ensure_websub_secret() -> None:
     logger.info("WEBSUB_SECRET generated and appended to .env")
 
 
-if __name__ == "__main__":
-    _ensure_websub_secret()
-
-    # Reload settings so subscribe_to_feed() sees the new secret
+async def _main() -> None:
     from app.config import get_settings
     get_settings.cache_clear()
 
     from app.runtime.fresh_news import subscribe_to_feed
     settings = get_settings()
     for feed_url in settings.rss_feed_urls:
-        subscribe_to_feed(feed_url)
+        await subscribe_to_feed(feed_url)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    _ensure_websub_secret()
+    asyncio.run(_main())
