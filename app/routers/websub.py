@@ -4,10 +4,13 @@ import hashlib
 import hmac
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.dependencies import get_db
 from app.ingest.fresh_news import FeedXmlParser
+from app.services.ingest_service import persist_websub_push
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +41,9 @@ async def verify_intent(
 async def receive_feed_update(
     request: Request,
     topic: str = Query(...),
+    db: AsyncSession | None = Depends(get_db),
 ) -> Response:
-    """Validate HMAC signature and extract articles from WebSub XML payload."""
+    """Validate HMAC signature, extract articles, and persist them."""
     settings = get_settings()
 
     if topic not in settings.rss_feed_urls:
@@ -52,9 +56,7 @@ async def receive_feed_update(
     raw_body = await request.body()
     sha_type, hub_sign = signature.split("=", 1)
     if sha_type == "sha256":
-        local_sign = hmac.new(
-            settings.websub_secret.encode(), raw_body, hashlib.sha256
-        ).hexdigest()
+        local_sign = hmac.new(settings.websub_secret.encode(), raw_body, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(local_sign, hub_sign):
             raise HTTPException(status_code=403, detail="Invalid signature.")
     else:
@@ -63,5 +65,7 @@ async def receive_feed_update(
     xml_content = raw_body.decode("utf-8")
     articles = FeedXmlParser().parse_xml(xml_content, topics=[topic], since=None)
     logger.info("WebSub push from %s: %d articles extracted", topic, len(articles))
+
+    await persist_websub_push(articles, topic, db)
 
     return Response(status_code=202)
