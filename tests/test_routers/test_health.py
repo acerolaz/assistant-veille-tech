@@ -16,4 +16,4 @@ def test_topics_returns_popular_list(client: TestClient) -> None:
     data = r.json()
     assert isinstance(data, list)
     labels = {t["label"] for t in data}
-    assert {"Python", "JavaScript", "AI/ML", "DevOps", "Web"} <= labels
+    assert {"Python", "JavaScript", "AI/ML", "DevOps", "CSharp"} <= labels

@@ -44,17 +44,18 @@ async def subscribe_to_feed(feed_url: str) -> None:
             await session.rollback()
 
         try:
-            resp = httpx.post(
-                settings.websub_hub_url,
-                data={
-                    "hub.callback": callback_url,
-                    "hub.topic": feed_url,
-                    "hub.mode": "subscribe",
-                    "hub.secret": settings.websub_secret,
-                    "hub.lease_seconds": 864000,
-                },
-                timeout=10.0,
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    settings.websub_hub_url,
+                    data={
+                        "hub.callback": callback_url,
+                        "hub.topic": feed_url,
+                        "hub.mode": "subscribe",
+                        "hub.secret": settings.websub_secret,
+                        "hub.lease_seconds": 864000,
+                    },
+                    timeout=10.0,
+                )
             sub_status = "ok" if resp.status_code in (200, 202, 204) else "error"
             logger.info(
                 "WebSub subscription %s for %s (HTTP %s)", sub_status, feed_url, resp.status_code
