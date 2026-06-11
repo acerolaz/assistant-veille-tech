@@ -11,7 +11,7 @@ POPULAR_TOPICS: list[Topic] = [
     Topic(slug="javascript", label="JavaScript"),
     Topic(slug="ai-ml", label="AI/ML"),
     Topic(slug="devops", label="DevOps"),
-    Topic(slug="web", label="Web"),
+    Topic(slug="csharp", label="CSharp"),
 ]
 
 

@@ -14,7 +14,7 @@ RUN apt-get update \
 
 # Copy lock files first for better layer caching
 # Dependencies are only re-downloaded if pyproject.toml or uv.lock change
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock alembic.ini ./
 RUN uv sync --frozen
 
 COPY app ./app
@@ -22,5 +22,4 @@ COPY scripts ./scripts
 
 EXPOSE 8000
 
-# Use exec form to ensure proper signal handling
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
