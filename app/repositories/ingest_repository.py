@@ -106,6 +106,32 @@ class IngestRepository:
         )
         return row.fetchone() is not None
 
+    async def delete_stale_websub_articles_for_topic(self, topic: str) -> list[str]:
+        """Delete websub ingest_articles older than 2 days for topic; return their urls."""
+        if self._session is None:
+            return []
+        rows = await self._session.execute(
+            text(
+                "SELECT a.id, a.url FROM ingest_articles a"
+                " JOIN ingest_runs r ON r.id = a.run_id"
+                " WHERE a.topic = :topic"
+                " AND r.ingester = 'websub_push'"
+                " AND a.ingested_at < NOW() - INTERVAL '2 days'"
+            ),
+            {"topic": topic},
+        )
+        records = rows.fetchall()
+        if not records:
+            return []
+        ids = [r[0] for r in records]
+        urls = [r[1] for r in records if r[1]]
+        await self._session.execute(
+            text("DELETE FROM ingest_articles WHERE id = ANY(:ids)"),
+            {"ids": ids},
+        )
+        logger.info("Deleted %d stale websub ingest_articles for topic=%s", len(ids), topic)
+        return urls
+
     async def record_subscription(
         self, feed_url: str, status: str, error: str | None = None
     ) -> None:

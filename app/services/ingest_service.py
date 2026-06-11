@@ -15,6 +15,12 @@ from app.vector_db.connection import get_collection
 logger = logging.getLogger(__name__)
 
 
+def _delete_stale_from_chroma(urls: list[str]) -> None:
+    """Synchronous ChromaDB batch delete — called via run_in_threadpool."""
+    collection = get_collection()
+    collection.delete(ids=urls)
+
+
 def _upsert_to_chroma(articles: list[dict[str, Any]], topic: str) -> int:
     """Synchronous ChromaDB upsert — called via run_in_threadpool."""
     collection = get_collection()
@@ -50,6 +56,15 @@ async def persist_websub_push(
     articles = dedupe(articles)
 
     repo = IngestRepository(db)
+
+    if articles:
+        stale_urls = await repo.delete_stale_websub_articles_for_topic(topic)
+        if stale_urls:
+            try:
+                await run_in_threadpool(_delete_stale_from_chroma, stale_urls)
+            except chromadb.errors.ChromaError as exc:
+                logger.warning("ChromaDB stale delete failed for topic %s: %s", topic, exc)
+
     run_id = await repo.create_run("websub_push", [topic])
     if run_id is None:
         return
