@@ -3,13 +3,10 @@ from __future__ import annotations
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import httpx
-
-from app.config import Settings, get_settings
 from app.schemas import Article
 
 logger = logging.getLogger(__name__)
@@ -90,81 +87,6 @@ def _extract_item_fields(
     )
 
     return title, url, pub_date, source, body
-
-
-@dataclass
-class FreshNewsIngester:
-    settings: Settings | None = None
-
-    def __post_init__(self) -> None:
-        if self.settings is None:
-            self.settings = get_settings()
-
-    def _fetch_topic(
-        self,
-        client: httpx.Client,
-        topic: str,
-        from_date: str,
-        page_size: int = 20,
-    ) -> list[dict[str, Any]]:
-        """Fetch one page of NewsAPI articles for a single topic and return raw dicts."""
-        response = client.get(
-            self.settings.news_api_base_url,
-            params={
-                "q": topic,
-                "from": from_date,
-                "apiKey": self.settings.news_api_key,
-                "sortBy": "publishedAt",
-                "language": "en",
-                "pageSize": page_size,
-            },
-            timeout=10.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        if data.get("status") != "ok":
-            logger.error("NewsAPI error for topic '%s': %s", topic, data.get("message"))
-            return []
-        return data.get("articles", [])
-
-    def run(self, topics: list[str], since: datetime | None = None) -> list[dict[str, Any]]:
-        """Fetch recent articles from NewsAPI with a short time window.
-
-        Uses `since` as the from-date when provided; otherwise defaults to the last 6 hours.
-        Returns validated Article dicts filtered to date >= since.
-        """
-        if not topics:
-            return []
-
-        from_dt = since if since is not None else datetime.now(timezone.utc) - timedelta(hours=6)
-        since_dt = from_dt if from_dt.tzinfo else from_dt.replace(tzinfo=timezone.utc)
-        articles: list[dict[str, Any]] = []
-
-        with httpx.Client() as client:
-            for topic in topics:
-                try:
-                    page = self._fetch_topic(client, topic, from_dt.isoformat())
-                    for idx, item in enumerate(page):
-                        try:
-                            article = Article(
-                                id=f"fresh-{topic}-{idx}",
-                                title=item.get("title") or "",
-                                source=item.get("source", {}).get("name") or "NewsAPI",
-                                date=item.get("publishedAt"),
-                                url=item.get("url") or "",
-                                content=item.get("content") or "",
-                                tags=[topic],
-                            )
-                            if article.date is not None and not _is_after_since(article.date, since_dt):
-                                continue
-                            articles.append(_to_naive_date_dict(article.model_dump(mode="json")))
-                        except Exception as exc:
-                            logger.warning("Skipping malformed article: %s", exc)
-                    logger.info("FreshNews fetched %d articles for topic '%s'", len(page), topic)
-                except Exception as exc:
-                    logger.error("FreshNewsIngester failed for topic '%s': %s", topic, exc)
-
-        return articles
 
 
 @dataclass

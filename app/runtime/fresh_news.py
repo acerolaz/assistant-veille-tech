@@ -6,11 +6,12 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.db import async_db_session
-from app.ingest.fresh_news import FreshNewsIngester
 from app.repositories.ingest_repository import IngestRepository
+from app.vector_db.retrieval import retrieve_recent
 
 logger = logging.getLogger(__name__)
 
@@ -67,5 +68,8 @@ async def fetch(
     topics: list[str],
     since: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """Return fresh articles for the given topics via FreshNewsIngester."""
-    return FreshNewsIngester().run(topics, since)
+    """Return fresh articles from ChromaDB for the given topics."""
+    if not topics:
+        return []
+    query = ", ".join(topics)
+    return await run_in_threadpool(retrieve_recent, query, 20, since)
