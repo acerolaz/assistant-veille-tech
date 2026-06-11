@@ -41,6 +41,7 @@ async def subscribe_to_feed(feed_url: str) -> None:
             logger.warning(
                 "DB dedup check failed for %s (%s) — proceeding with subscription", feed_url, exc
             )
+            await session.rollback()
 
         try:
             resp = httpx.post(
