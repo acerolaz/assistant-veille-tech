@@ -10,10 +10,13 @@ from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
 from app.db import async_db_session
+from app.ingest.news_api import NewsApiIngester
 from app.repositories.ingest_repository import IngestRepository
 from app.vector_db.retrieval import retrieve_recent
 
 logger = logging.getLogger(__name__)
+
+_MIN_FRESH = 3
 
 
 async def subscribe_to_feed(feed_url: str) -> None:
@@ -67,11 +70,40 @@ async def subscribe_to_feed(feed_url: str) -> None:
 
 
 async def fetch(
-    topics: list[str],
+    query: str,
     since: datetime | None = None,
+    limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Return fresh articles from ChromaDB for the given topics."""
-    if not topics:
+    """Return fresh articles matching the given query.
+
+    Queries ChromaDB first (24 h window by default). Falls back to a live
+    NewsAPI call when fewer than _MIN_FRESH results are found, keeping the
+    chat path side-effect-free (no ChromaDB write on fallback).
+    """
+    if not query.strip():
         return []
-    query = ", ".join(topics)
-    return await run_in_threadpool(retrieve_recent, query, 20, since)
+
+    chroma = await run_in_threadpool(retrieve_recent, query, limit, since)
+    if len(chroma) >= _MIN_FRESH:
+        return chroma
+
+    settings = get_settings()
+    if not settings.news_api_key:
+        logger.info("news_api_key not set — skipping NewsAPI fallback")
+        return chroma
+
+    try:
+        api_articles: list[dict[str, Any]] = await run_in_threadpool(
+            lambda: NewsApiIngester(settings).run([query])
+        )
+    except Exception as exc:
+        logger.warning("NewsAPI fallback failed: %s", exc)
+        return chroma
+
+    seen_urls = {a.get("url") for a in chroma}
+    merged = list(chroma)
+    for art in api_articles:
+        if art.get("url") not in seen_urls:
+            merged.append(art)
+            seen_urls.add(art.get("url"))
+    return merged[:limit]

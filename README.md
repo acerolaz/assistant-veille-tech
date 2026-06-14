@@ -6,8 +6,10 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 
 - Sélection de sujets populaires (Python, JavaScript, AI/ML, DevOps, Web) + saisie libre
 - Question en langage naturel → réponse synthétique citant ses sources
-- Retrieval sémantique sur une base vectorielle (Chroma) alimentée par scraping et NewsAPI
-- Injection d'articles récents au moment du chat pour couvrir l'actualité chaude
+- **Agent LangChain** (tool-calling) : décide dynamiquement d'interroger l'index interne (`search_index`) et/ou l'actualité fraîche (`fetch_fresh_news`) selon la question
+- Retrieval sémantique sur une base vectorielle (ChromaDB) alimentée par scraping et NewsAPI
+- Injection d'articles récents au moment du chat : ChromaDB en premier, fallback live NewsAPI si < 3 résultats (cold start)
+- Mode dégradé automatique si LLM non configuré (retourne les sources brutes sans synthèse)
 - UI Next.js : grille de cards (titre, source, date, snippet, tags couleur, lien)
 
 ## Stack
@@ -25,31 +27,43 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 
 ```
 .
-├── app/                      # backend FastAPI
-│   ├── main.py               # endpoints /health, /topics, /chat + WebSub lifespan
-│   ├── chat.py               # orchestration retrieval + fresh news + LLM
-│   ├── config.py             # settings (env)
-│   ├── schemas.py            # modèles pydantic
-│   ├── db.py                 # SQLAlchemy engine + session factory (Postgres optionnel)
-│   ├── rag/
-│   │   ├── chroma_client.py  # client HTTP Chroma + collection `articles`
-│   │   ├── retrieval.py      # embedding + query top-k
-│   │   └── llm.py            # pipeline LangChain → Azure AI (Kimi-K2.6)
+├── app/                        # backend FastAPI
+│   ├── main.py                 # app factory, lifespan (WebSub subscribe), middleware
+│   ├── config.py               # Settings via pydantic-settings (.env)
+│   ├── db.py                   # SQLAlchemy async engine + session factory
+│   ├── agents/
+│   │   └── veille_agent.py     # LangChain tool-calling agent (search_index + fetch_fresh_news)
 │   ├── ingest/
-│   │   ├── news_api.py       # ingester NewsAPI → Chroma
-│   │   ├── scraper.py        # scraping de sources tech
-│   │   ├── cleaning.py       # HTML→Markdown, dedup, chunking, boilerplate
-│   │   ├── enrich.py         # hook d'enrichissement post-retrieval
-│   │   └── fresh_news.py     # FreshNewsIngester : fetch NewsAPI + parse XML WebSub
-│   └── runtime/
-│       └── fresh_news.py     # webhook WebSub (/webhook/websub GET+POST) + subscribe_to_feed
-├── scripts/
-│   └── ingest_cli.py         # CLI d'ingestion (news / scrape)
+│   │   ├── news_api.py         # NewsApiIngester : fetch NewsAPI → list[dict]
+│   │   ├── scraper.py          # Scraper : fetch URL → Markdown via httpx + BS4
+│   │   ├── cleaning.py         # HTML→Markdown, dedup, chunking, strip_boilerplate
+│   │   ├── enrich.py           # enrich_retrieval() : normalise tags + source_type
+│   │   └── fresh_news.py       # FeedXmlParser : parse RSS/Atom XML WebSub pushes
+│   ├── models/                 # SQLAlchemy ORM models
+│   ├── repositories/           # DB query layer (IngestRepository …)
+│   ├── routers/
+│   │   ├── chat.py             # POST /chat → handle_chat()
+│   │   ├── topics.py           # GET /topics, POST /topics/news
+│   │   └── websub.py           # GET+POST /webhook/websub (WebSub hub callback)
+│   ├── runtime/
+│   │   └── fresh_news.py       # fetch() : ChromaDB 24 h + live NewsAPI fallback
+│   ├── schemas/                # Pydantic request/response models
+│   ├── services/
+│   │   ├── chat_service.py     # handle_chat() → run_agent()
+│   │   ├── ingest_service.py   # persist_websub_push() → Postgres + ChromaDB
+│   │   ├── llm_service.py      # get_llm(), _build_cards(), compose_answer()
+│   │   └── topics_service.py   # handle_fetch_news() → run_agent()
+│   └── vector_db/
+│       ├── connection.py       # get_client() / get_collection() (ChromaDB HttpClient)
+│       └── retrieval.py        # embed(), retrieve(), retrieve_recent()
 ├── tests/
-│   └── acceptance/           # tests d'acceptance de la chaîne d'ingestion
-├── web/                      # frontend Next.js 15
-│   ├── app/                  # App Router (page principale + layout)
-│   ├── lib/api.ts            # client REST vers le backend
+│   ├── acceptance/             # tests end-to-end (fetch, ingestion, health)
+│   ├── test_routers/           # tests HTTP des endpoints (TestClient + mocks)
+│   ├── test_services/          # tests unitaires services + agent
+│   └── test_vector_db/         # tests unitaires ChromaDB (EphemeralClient)
+├── web/                        # frontend Next.js 15
+│   ├── app/                    # App Router (page principale + layout)
+│   ├── lib/api.ts              # client REST vers le backend
 │   └── Dockerfile
 ├── Dockerfile.backend
 ├── docker-compose.yml
@@ -76,8 +90,11 @@ Tests :
 make test                     # uv run pytest
 ```
 
-Fichiers de test (`tests/acceptance/`) :
-- `test_cleaning.py`, `test_fresh_news.py`, `test_health.py`, `test_news_api_ingester.py`, `test_scraper.py`
+Fichiers de test :
+- `tests/acceptance/` — `test_cleaning.py`, `test_fresh_news.py`, `test_health.py`, `test_news_api_ingester.py`, `test_scraper.py`
+- `tests/test_routers/` — `test_agent_endpoints.py`, `test_health.py`
+- `tests/test_services/` — `test_veille_agent.py`, `test_fresh_news.py`, `test_enrich.py`
+- `tests/test_vector_db/` — `test_chroma.py`
 
 Ingestion (CLI) :
 
@@ -96,6 +113,39 @@ Voici quelques pistes de sources publiques utilisables pour alimenter l'index :
 
 Le choix exact des sources reste à arbitrer en fonction des sujets ciblés et de la fraîcheur attendue.
 
+## Flux de données
+
+```
+[WebSub push / NewsAPI / Scraper]
+           │
+           ▼
+  [ingest_service.persist_websub_push()]
+   HTML → Markdown → dedup → chunk → embed
+           │
+           ▼
+  [ChromaDB  +  PostgreSQL (ingest_runs)]
+
+           ┄┄┄  au moment du chat  ┄┄┄
+
+[POST /chat  ou  POST /topics/news]
+           │
+           ▼
+  [VeilleAgent.run_agent()]   ← LangChain tool-calling (max 4 itérations)
+     ├─ tool: search_index(query)
+     │       └── retrieval.retrieve() → enrich_retrieval()
+     │           (normalise tags, source_type = "internal")
+     └─ tool: fetch_fresh_news(query)
+             └── fresh_news.fetch()
+                 ├── ChromaDB retrieve_recent() (fenêtre 24 h)
+                 └── fallback: NewsApiIngester.run() si < 3 résultats
+           │
+           ▼
+  [_build_cards() → ChatResponse(answer, cards, status)]
+           │
+           ▼
+  [UI  — grille de cards]
+```
+
 ## Aller plus loin (optionnel)
 
 **Postgres** est déjà intégré (`app/db.py`, Alembic) et utilisé pour tracer les souscriptions WebSub (`ingest_runs`). La stack est extensible pour porter des comptes utilisateur (sign-up / sign-in), des sujets favoris et un historique des recherches. Cela ajouterait des endpoints `/users`, `/me/favorites`, `/me/history` et une page « Mon compte » côté frontend, avec un schéma user-scoped et les obligations RGPD associées (hash des mots de passe, durée de conservation, droit à l'effacement).
@@ -108,47 +158,6 @@ make lint       # ruff check
 make typecheck  # mypy
 make logs       # docker compose logs -f
 make down       # stop services
-```
-
-
-
-## 📊 Complete Data Pipeline (ETL + Inference)
-
-The system follows this comprehensive data flow from **sources to UI**:
-
-```
-[Sources: API/Web/PDF]
-       │
-       ▼
-[Async Ingestion Queue] ──> [Raw Data Storage (azure blob storage)]
-       │
-       ▼
-[Parsing & Markdown Conversion]
-       │
-       ▼
-[Cleaning, De-duplication, & NER Enrichment]
-       │
-       ▼
-[Parent-Child Chunking]
-       │
-       ▼
-[Vector Embedding (Moonshot)] ──> [Production Vector DB (Hybrid Index)]
-                                         │
-       ┌─────────────────────────────────┘
-       ▼
-[User Query] ──> [Query Transformation]
-       │
-       ▼
-[Hybrid Search (Vector + BM25)]
-       │
-       ▼
-[Reranking Layer (Top-K Compression)]
-       │
-       ▼
-[Context Injection & Kimi K2 LLM]
-       │
-       ▼
-[UI / Display Cards] ──> [Telemetry & Evaluation Logging (Langfuse)]
 ```
 
 ## Licence

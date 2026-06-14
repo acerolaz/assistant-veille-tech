@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import chromadb
-import pytest
 
 
 def test_add_and_query_vectors(ephemeral_chroma_client: chromadb.EphemeralClient) -> None:

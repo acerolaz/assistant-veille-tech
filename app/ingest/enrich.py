@@ -4,17 +4,19 @@ from typing import Any
 
 
 def enrich_retrieval(retrieved: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Enrichit les chunks récupérés par la recherche de similarité.
+    """Normalise chunk metadata before the agent serialises it to the LLM.
 
-    Par exemple, on peut faire appel à des APIs externes pour ajouter des
-    métadonnées, ou reformuler le contenu des chunks.
-
-    Ici, on se contente d'ajouter une métadonnée "enriched" à True pour
-    illustrer le concept.
+    Ensures tags are always a list, fills missing title/url keys, and stamps
+    source_type so the LLM can distinguish internal-index hits from fresh news.
     """
     enriched = []
     for chunk in retrieved:
-        meta = chunk.get("metadata", {})
-        meta["enriched"] = True
+        meta = dict(chunk.get("metadata") or {})
+        raw_tags = meta.get("tags", "")
+        if isinstance(raw_tags, str):
+            meta["tags"] = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        meta.setdefault("title", "")
+        meta.setdefault("url", "")
+        meta["source_type"] = "internal"
         enriched.append({**chunk, "metadata": meta})
     return enriched
