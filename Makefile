@@ -1,4 +1,4 @@
-.PHONY: up down logs install migrate migrate-down test fmt lint typecheck ingest scrape chat-test fresnews
+.PHONY: up down logs install migrate migrate-down test fmt lint typecheck ingest scrape chat-test fresnews unsubscribe
 
 install:
 	uv sync
@@ -45,3 +45,6 @@ chat-test:
 		-H 'Content-Type: application/json' \
 		-d '{"question":"Quelles tendances reviennent cette semaine ?","topics":["Python","AI/ML"]}' \
 		| python -m json.tool
+
+unsubscribe:
+	curl -s -X DELETE http://localhost:8000/webhook/websub

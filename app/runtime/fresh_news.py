@@ -35,7 +35,7 @@ async def subscribe_to_feed(feed_url: str) -> None:
     async with async_db_session() as session:
         repo = IngestRepository(session)
         try:
-            if await repo.has_active_subscription(feed_url):
+            if await repo.has_active_subscription(feed_url, lease_days=settings.websub_lease_days):
                 logger.info(
                     "Active WebSub subscription found for %s — skipping re-subscribe", feed_url
                 )
@@ -55,7 +55,7 @@ async def subscribe_to_feed(feed_url: str) -> None:
                         "hub.topic": feed_url,
                         "hub.mode": "subscribe",
                         "hub.secret": settings.websub_secret,
-                        "hub.lease_seconds": 864000,
+                        "hub.lease_seconds": settings.websub_lease_days * 86400,
                     },
                     timeout=10.0,
                 )

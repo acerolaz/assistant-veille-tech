@@ -64,7 +64,8 @@ async def receive_feed_update(
         raise HTTPException(status_code=400, detail=f"Unsupported signature type: {sha_type}")
     local_sign = hmac.new(settings.websub_secret.encode(), raw_body, digest).hexdigest()
     if not hmac.compare_digest(local_sign, hub_sign):
-        raise HTTPException(status_code=403, detail="Invalid signature.")
+        logger.warning("HMAC mismatch for topic %s — push discarded (stale secret?)", topic)
+        return Response(status_code=202)
 
     xml_content = raw_body.decode("utf-8")
     articles = FeedXmlParser().parse_xml(xml_content, topics=[topic], since=None)

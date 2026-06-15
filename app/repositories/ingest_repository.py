@@ -91,7 +91,7 @@ class IngestRepository:
             },
         )
 
-    async def has_active_subscription(self, feed_url: str) -> bool:
+    async def has_active_subscription(self, feed_url: str, lease_days: int = 1) -> bool:
         if self._session is None:
             return False
         row = await self._session.execute(
@@ -99,10 +99,10 @@ class IngestRepository:
                 "SELECT id FROM ingest_runs"
                 " WHERE ingester = 'websub_sub' AND status = 'ok'"
                 " AND topics = :feed_url"
-                " AND started_at > NOW() - INTERVAL '10 days'"
+                " AND started_at > NOW() - (:lease_days * INTERVAL '1 day')"
                 " LIMIT 1"
             ),
-            {"feed_url": feed_url},
+            {"feed_url": feed_url, "lease_days": lease_days},
         )
         return row.fetchone() is not None
 
@@ -132,16 +132,16 @@ class IngestRepository:
         logger.info("Deleted %d stale websub ingest_articles for topic=%s", len(ids), topic)
         return urls
 
-    async def invalidate_subscription(self, feed_url: str) -> None:
+    async def invalidate_subscription(self, feed_url: str, lease_days: int = 1) -> None:
         if self._session is None:
             return
         await self._session.execute(
             text(
                 "UPDATE ingest_runs SET status='stale'"
                 " WHERE ingester='websub_sub' AND topics=:feed_url"
-                " AND started_at > NOW() - INTERVAL '10 days'"
+                " AND started_at > NOW() - (:lease_days * INTERVAL '1 day')"
             ),
-            {"feed_url": feed_url},
+            {"feed_url": feed_url, "lease_days": lease_days},
         )
 
     async def record_subscription(

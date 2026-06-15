@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     websub_secret: str = ""
     websub_hub_url: str = "https://pubsubhubbub.appspot.com/"
     websub_callback_url: str = ""
+    websub_lease_days: int = 1
     rss_feed_urls: list[str] = ["https://medium.com/feed/tag/csharp"]
 
     backend_port: int
