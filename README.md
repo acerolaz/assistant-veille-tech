@@ -4,7 +4,7 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 
 ## Fonctionnalités
 
-- Sélection de sujets populaires (Python, JavaScript, AI/ML, DevOps, Web) + saisie libre
+- Sélection de sujets populaires (Python, JavaScript, AI/ML, DevOps, CSharp) + saisie libre
 - Question en langage naturel → réponse synthétique citant ses sources
 - **Agent LangChain** (tool-calling) : décide dynamiquement d'interroger l'index interne (`search_index`) et/ou l'actualité fraîche (`fetch_fresh_news`) selon la question
 - Retrieval sémantique sur une base vectorielle (ChromaDB) alimentée par scraping et NewsAPI
@@ -17,7 +17,8 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 - **Backend** : Python 3.11, uv, FastAPI ≥0.115, Pydantic 2
 - **RAG** : ChromaDB 0.5, sentence-transformers 3 (`intfloat/multilingual-e5-small`)
 - **Database** : ChromaDB (vectorielle), Postgresql (traces de l'assistant, historique des chats et sources des sujets techniques)
-- **Azure services** : Azure Blob Storage (stockage des documents bruts), Azure AI Inference (Kimi-K2.6), Azure Functions (ingestion périodique asynchrone via un webhook)
+- **Azure services** : Azure AI Inference (Kimi-K2.6)
+- **Ingestion** : WebSub / PubSubHubbub (callback FastAPI `/webhook/websub`), NewsAPI, scraping httpx
 - **LLM** : LangChain 0.3 + `langchain-azure-ai` → Azure AI Inference (Kimi-K2.6)
 - **Scraping / HTTP** : httpx 0.27, BeautifulSoup 4, markdownify
 - **Frontend** : Next.js 15 (App Router), React 19, TypeScript 5, Tailwind CSS 4
@@ -39,6 +40,7 @@ Nauda Palisse — assistant de veille technologique. RAG sur Chroma + injection 
 │   │   ├── cleaning.py         # HTML→Markdown, dedup, chunking, strip_boilerplate
 │   │   ├── enrich.py           # enrich_retrieval() : normalise tags + source_type
 │   │   └── fresh_news.py       # FeedXmlParser : parse RSS/Atom XML WebSub pushes
+│   ├── migrations/             # Alembic env + versions
 │   ├── models/                 # SQLAlchemy ORM models
 │   ├── repositories/           # DB query layer (IngestRepository …)
 │   ├── routers/
@@ -91,9 +93,9 @@ make test                     # uv run pytest
 ```
 
 Fichiers de test :
-- `tests/acceptance/` — `test_cleaning.py`, `test_fresh_news.py`, `test_health.py`, `test_news_api_ingester.py`, `test_scraper.py`
+- `tests/acceptance/` — `test_cleaning.py`, `test_fresh_news.py`, `test_news_api_ingester.py`, `test_scraper.py`
 - `tests/test_routers/` — `test_agent_endpoints.py`, `test_health.py`
-- `tests/test_services/` — `test_veille_agent.py`, `test_fresh_news.py`, `test_enrich.py`
+- `tests/test_services/` — `test_veille_agent.py`, `test_fresh_news.py`, `test_enrich.py`, `test_ingest_service.py`
 - `tests/test_vector_db/` — `test_chroma.py`
 
 Ingestion (CLI) :
