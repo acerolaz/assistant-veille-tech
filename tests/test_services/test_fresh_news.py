@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
-from app.runtime.fresh_news import fetch
+from app.runtime.fresh_news import fetch, unsubscribe_from_feed
 
 _CHROMA_ARTICLE = {
     "title": "ChromaDB hit",
@@ -108,3 +109,95 @@ async def test_fetch_returns_empty_on_blank_query() -> None:
     assert result == []
     mock_retrieve.assert_not_called()
     mock_ingester_cls.assert_not_called()
+
+
+_FEED = "https://medium.com/feed/tag/csharp"
+_SETTINGS = MagicMock(
+    websub_callback_url="http://localhost:8000/webhook/websub",
+    websub_hub_url="https://pubsubhubbub.appspot.com/",
+)
+
+
+def _make_http_mock(status_code: int = 202) -> AsyncMock:
+    mock = AsyncMock()
+    mock.__aenter__ = AsyncMock(return_value=mock)
+    mock.__aexit__ = AsyncMock(return_value=None)
+    mock.post = AsyncMock(return_value=MagicMock(status_code=status_code))
+    return mock
+
+
+def _make_db_mock() -> tuple[AsyncMock, AsyncMock]:
+    session = AsyncMock()
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=session)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    return cm, session
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_from_feed_posts_unsubscribe_to_hub() -> None:
+    mock_http = _make_http_mock()
+    mock_repo = MagicMock(invalidate_subscription=AsyncMock())
+    mock_cm, _ = _make_db_mock()
+
+    with (
+        patch("app.runtime.fresh_news.get_settings", return_value=_SETTINGS),
+        patch("app.runtime.fresh_news.httpx.AsyncClient", return_value=mock_http),
+        patch("app.runtime.fresh_news.async_db_session", return_value=mock_cm),
+        patch("app.runtime.fresh_news.IngestRepository", return_value=mock_repo),
+    ):
+        await unsubscribe_from_feed(_FEED)
+
+    mock_http.post.assert_awaited_once()
+    data = mock_http.post.call_args.kwargs["data"]
+    assert data["hub.mode"] == "unsubscribe"
+    assert data["hub.topic"] == _FEED
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_from_feed_calls_invalidate_subscription() -> None:
+    mock_http = _make_http_mock()
+    mock_repo = MagicMock(invalidate_subscription=AsyncMock())
+    mock_cm, _ = _make_db_mock()
+
+    with (
+        patch("app.runtime.fresh_news.get_settings", return_value=_SETTINGS),
+        patch("app.runtime.fresh_news.httpx.AsyncClient", return_value=mock_http),
+        patch("app.runtime.fresh_news.async_db_session", return_value=mock_cm),
+        patch("app.runtime.fresh_news.IngestRepository", return_value=mock_repo),
+    ):
+        await unsubscribe_from_feed(_FEED)
+
+    mock_repo.invalidate_subscription.assert_awaited_once_with(_FEED)
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_from_feed_skips_when_no_callback_url() -> None:
+    with (
+        patch(
+            "app.runtime.fresh_news.get_settings",
+            return_value=MagicMock(websub_callback_url=""),
+        ),
+        patch("app.runtime.fresh_news.httpx.AsyncClient") as mock_cls,
+    ):
+        await unsubscribe_from_feed(_FEED)
+
+    mock_cls.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_from_feed_logs_error_on_request_failure() -> None:
+    mock_http = _make_http_mock()
+    mock_http.post = AsyncMock(side_effect=httpx.RequestError("timeout"))
+    mock_repo = MagicMock(invalidate_subscription=AsyncMock())
+    mock_cm, _ = _make_db_mock()
+
+    with (
+        patch("app.runtime.fresh_news.get_settings", return_value=_SETTINGS),
+        patch("app.runtime.fresh_news.httpx.AsyncClient", return_value=mock_http),
+        patch("app.runtime.fresh_news.async_db_session", return_value=mock_cm),
+        patch("app.runtime.fresh_news.IngestRepository", return_value=mock_repo),
+    ):
+        await unsubscribe_from_feed(_FEED)  # must not raise
+
+    mock_repo.invalidate_subscription.assert_not_awaited()

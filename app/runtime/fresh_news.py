@@ -69,6 +69,37 @@ async def subscribe_to_feed(feed_url: str) -> None:
             await repo.record_subscription(feed_url, "error", str(exc))
 
 
+async def unsubscribe_from_feed(feed_url: str) -> None:
+    """Send hub.mode=unsubscribe to the hub and invalidate the DB subscription record."""
+    settings = get_settings()
+    if not settings.websub_callback_url:
+        logger.warning("WEBSUB_CALLBACK_URL not set — skipping WebSub unsubscription")
+        return
+
+    callback_url = f"{settings.websub_callback_url}?topic={quote(feed_url, safe='')}"
+
+    async with async_db_session() as session:
+        repo = IngestRepository(session)
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    settings.websub_hub_url,
+                    data={
+                        "hub.callback": callback_url,
+                        "hub.topic": feed_url,
+                        "hub.mode": "unsubscribe",
+                    },
+                    timeout=10.0,
+                )
+            status = "ok" if resp.status_code in (200, 202, 204) else "error"
+            logger.info(
+                "WebSub unsubscription %s for %s (HTTP %s)", status, feed_url, resp.status_code
+            )
+            await repo.invalidate_subscription(feed_url)
+        except httpx.RequestError as exc:
+            logger.error("WebSub unsubscription failed for %s: %s", feed_url, exc)
+
+
 async def fetch(
     query: str,
     since: datetime | None = None,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from typing import AsyncGenerator
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -81,3 +81,41 @@ def test_receive_feed_update_missing_signature_returns_401(wsclient: TestClient)
             content=b"<feed></feed>",
         )
     assert resp.status_code == 401
+
+
+def test_delete_websub_returns_204_and_calls_unsubscribe_for_each_feed(
+    wsclient: TestClient,
+) -> None:
+    with (
+        patch("app.routers.websub.get_settings", return_value=_mock_settings()),
+        patch(
+            "app.routers.websub.unsubscribe_from_feed",
+            new_callable=AsyncMock,
+        ) as mock_unsub,
+    ):
+        resp = wsclient.delete("/webhook/websub")
+
+    assert resp.status_code == 204
+    mock_unsub.assert_awaited_once_with(FEED_URL)
+
+
+def test_delete_websub_calls_unsubscribe_for_every_configured_feed(
+    wsclient: TestClient,
+) -> None:
+    second_url = "https://example.com/feed/python"
+    settings = _mock_settings()
+    settings.rss_feed_urls = [FEED_URL, second_url]
+
+    with (
+        patch("app.routers.websub.get_settings", return_value=settings),
+        patch(
+            "app.routers.websub.unsubscribe_from_feed",
+            new_callable=AsyncMock,
+        ) as mock_unsub,
+    ):
+        resp = wsclient.delete("/webhook/websub")
+
+    assert resp.status_code == 204
+    assert mock_unsub.await_count == 2
+    mock_unsub.assert_any_await(FEED_URL)
+    mock_unsub.assert_any_await(second_url)

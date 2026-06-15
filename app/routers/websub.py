@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.dependencies import get_db
 from app.ingest.fresh_news import FeedXmlParser
+from app.runtime.fresh_news import unsubscribe_from_feed
 from app.services.ingest_service import persist_websub_push
 
 logger = logging.getLogger(__name__)
@@ -72,3 +73,12 @@ async def receive_feed_update(
     await persist_websub_push(articles, topic, db)
 
     return Response(status_code=202)
+
+
+@router.delete("/websub")
+async def unsubscribe_all_feeds() -> Response:
+    """Unsubscribe from all configured RSS feeds and invalidate DB subscription records."""
+    settings = get_settings()
+    for feed_url in settings.rss_feed_urls:
+        await unsubscribe_from_feed(feed_url)
+    return Response(status_code=204)

@@ -132,6 +132,18 @@ class IngestRepository:
         logger.info("Deleted %d stale websub ingest_articles for topic=%s", len(ids), topic)
         return urls
 
+    async def invalidate_subscription(self, feed_url: str) -> None:
+        if self._session is None:
+            return
+        await self._session.execute(
+            text(
+                "UPDATE ingest_runs SET status='stale'"
+                " WHERE ingester='websub_sub' AND topics=:feed_url"
+                " AND started_at > NOW() - INTERVAL '10 days'"
+            ),
+            {"feed_url": feed_url},
+        )
+
     async def record_subscription(
         self, feed_url: str, status: str, error: str | None = None
     ) -> None:
